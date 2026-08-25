@@ -62,6 +62,8 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
   List<String>? _lastNetworkIcons;
   List<String>? _lastSelectedNetworkIcons;
   List<int?>? _lastBadgeCounts;
+  List<bool>? _lastSearchFlags;
+  List<bool>? _lastSpacerFlags;
   TabBarMinimizeBehavior? _lastMinimizeBehavior;
   bool? _lastHidden;
 
@@ -310,6 +312,14 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
       if (idx != null) {
         widget.onTap(idx);
         _lastIndex = idx;
+        // UIKit has already moved the highlight to the tapped item. When the app
+        // declines the change - a detached bubble used as an action button, or a
+        // tab whose navigation was refused - nothing else would push the real
+        // selection back, so re-assert it once the app's rebuild has landed.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _channel == null) return;
+          if (widget.selectedIndex != _lastIndex) _syncPropsToNativeIfNeeded();
+        });
       }
     }
     return null;
@@ -361,6 +371,9 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
     final networkIcons = _mapNetworkIcons();
     final selectedNetworkIcons = _mapSelectedNetworkIcons();
     final searchFlags = widget.destinations.map((e) => e.isSearch).toList();
+    final spacerFlags = widget.destinations
+        .map((e) => e.addSpacerAfter)
+        .toList();
     final badgeCounts = widget.destinations.map((e) => e.badgeCount).toList();
 
     if (_lastLabels?.join('|') != labels.join('|') ||
@@ -372,7 +385,9 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
         _lastSelectedFileIcons?.join('|') != selectedFileIcons.join('|') ||
         _lastNetworkIcons?.join('|') != networkIcons.join('|') ||
         _lastSelectedNetworkIcons?.join('|') !=
-            selectedNetworkIcons.join('|')) {
+            selectedNetworkIcons.join('|') ||
+        _lastSearchFlags?.join('|') != searchFlags.join('|') ||
+        _lastSpacerFlags?.join('|') != spacerFlags.join('|')) {
       await ch.invokeMethod('setItems', {
         'labels': labels,
         'sfSymbols': symbols,
@@ -384,6 +399,7 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
         'networkIcons': networkIcons,
         'selectedNetworkIcons': selectedNetworkIcons,
         'searchFlags': searchFlags,
+        'spacerFlags': spacerFlags,
         'badgeCounts': badgeCounts,
         'selectedIndex': widget.selectedIndex,
       });
@@ -396,6 +412,8 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
       _lastSelectedFileIcons = selectedFileIcons;
       _lastNetworkIcons = networkIcons;
       _lastSelectedNetworkIcons = selectedNetworkIcons;
+      _lastSearchFlags = searchFlags;
+      _lastSpacerFlags = spacerFlags;
       _requestIntrinsicSize();
     }
 
@@ -453,6 +471,10 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
     _lastNetworkIcons = _mapNetworkIcons();
     _lastSelectedNetworkIcons = _mapSelectedNetworkIcons();
     _lastBadgeCounts = widget.destinations.map((e) => e.badgeCount).toList();
+    _lastSearchFlags = widget.destinations.map((e) => e.isSearch).toList();
+    _lastSpacerFlags = widget.destinations
+        .map((e) => e.addSpacerAfter)
+        .toList();
   }
 
   Future<void> _syncHiddenIfNeeded() async {
@@ -489,6 +511,9 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
     final networkIcons = _mapNetworkIcons();
     final selectedNetworkIcons = _mapSelectedNetworkIcons();
     final searchFlags = widget.destinations.map((e) => e.isSearch).toList();
+    final spacerFlags = widget.destinations
+        .map((e) => e.addSpacerAfter)
+        .toList();
     final badgeCounts = widget.destinations.map((e) => e.badgeCount).toList();
 
     try {
@@ -503,6 +528,7 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
         'networkIcons': networkIcons,
         'selectedNetworkIcons': selectedNetworkIcons,
         'searchFlags': searchFlags,
+        'spacerFlags': spacerFlags,
         'badgeCounts': badgeCounts,
         'selectedIndex': widget.selectedIndex,
       });
