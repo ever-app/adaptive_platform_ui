@@ -35,6 +35,9 @@ class iOS26TabBarPlatformView: NSObject, FlutterPlatformView, UITabBarDelegate {
     private var currentSelectedNetworkIcons: [String] = []
     private var currentSearchFlags: [Bool] = []
     private var currentSpacerFlags: [Bool] = []
+    /// The item the highlight belongs to, so a tap on a detached bubble can hand
+    /// it straight back rather than leaving the bubble looking selected.
+    private weak var lastTabSelection: UITabBarItem?
     private var currentBadgeCounts: [Int?] = []
     private let imageCache = NSCache<NSString, UIImage>()
 
@@ -303,6 +306,7 @@ class iOS26TabBarPlatformView: NSObject, FlutterPlatformView, UITabBarDelegate {
 
             if let bar = self.tabBar, let items = bar.items, idx >= 0, idx < items.count {
                 bar.selectedItem = items[idx]
+                self.lastTabSelection = items[idx]
             }
             result(nil)
 
@@ -560,6 +564,7 @@ class iOS26TabBarPlatformView: NSObject, FlutterPlatformView, UITabBarDelegate {
         bar.items = items
         if target >= 0, target < items.count {
             bar.selectedItem = items[target]
+            lastTabSelection = items[target]
         }
     }
 
@@ -567,9 +572,23 @@ class iOS26TabBarPlatformView: NSObject, FlutterPlatformView, UITabBarDelegate {
     func view() -> UIView { container }
 
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-        if let bar = self.tabBar, bar === tabBar, let items = bar.items, let idx = items.firstIndex(of: item) {
-            channel.invokeMethod("valueChanged", arguments: ["index": idx])
+        guard let bar = self.tabBar, bar === tabBar,
+              let items = bar.items, let idx = items.firstIndex(of: item) else { return }
+
+        if idx >= detachedRangeStart(itemCount: items.count) {
+            // A detached item is a bubble beside the pill, not a tab. UITabBar
+            // has already moved the highlight onto it by the time we get here,
+            // so put it back in the same runloop turn - a frame later, via Dart,
+            // is late enough to be seen as a flicker. If the app does adopt the
+            // index, its setSelectedIndex lands normally right after.
+            if let previous = lastTabSelection, items.contains(previous) {
+                bar.selectedItem = previous
+            }
+        } else {
+            lastTabSelection = item
         }
+
+        channel.invokeMethod("valueChanged", arguments: ["index": idx])
     }
 
     private static func colorFromARGB(_ argb: Int) -> UIColor {

@@ -67,6 +67,14 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
   TabBarMinimizeBehavior? _lastMinimizeBehavior;
   bool? _lastHidden;
 
+  /// Index where the trailing detached group starts, mirroring the native
+  /// `detachedRangeStart`; equals the destination count when there is none.
+  int get _detachedRangeStart {
+    final last = widget.destinations.lastIndexWhere((e) => e.addSpacerAfter);
+    if (last < 0) return widget.destinations.length;
+    return last + 1;
+  }
+
   bool get _isDark =>
       MediaQuery.platformBrightnessOf(context) == Brightness.dark;
   bool get _isRtl => Directionality.of(context) == TextDirection.rtl;
@@ -311,11 +319,14 @@ class _IOS26NativeTabBarState extends State<IOS26NativeTabBar> {
       final idx = (args?['index'] as num?)?.toInt();
       if (idx != null) {
         widget.onTap(idx);
-        _lastIndex = idx;
-        // UIKit has already moved the highlight to the tapped item. When the app
-        // declines the change - a detached bubble used as an action button, or a
-        // tab whose navigation was refused - nothing else would push the real
-        // selection back, so re-assert it once the app's rebuild has landed.
+        // Native keeps the highlight where it was when a detached bubble is
+        // tapped, so only mirror the move for real tabs. Recording it for a
+        // bubble would make the sync below think native is already there and
+        // skip the push if the app does adopt the index.
+        if (idx < _detachedRangeStart) _lastIndex = idx;
+        // For a real tab UIKit has already moved the highlight; if the app
+        // declines the change nothing else would push the true selection back,
+        // so re-assert it once the app's rebuild has landed.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || _channel == null) return;
           if (widget.selectedIndex != _lastIndex) _syncPropsToNativeIfNeeded();
