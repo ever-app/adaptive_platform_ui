@@ -7,8 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 /// `Platform.isIOS` is false, so the platform view is never instantiated and
 /// every `AdaptiveScaffold` falls through to the Material path regardless of the
 /// enclosing app widget. These tests therefore cover only what is reachable from
-/// the host: the flag's default, that it round-trips, and that setting it leaves
-/// the non-iOS tab bar untouched.
+/// the host: the flag's default, that it round-trips, and that the detached
+/// destination is lifted out of the bar into a floating button.
 void main() {
   group('AdaptiveNavigationDestination.addSpacerAfter', () {
     test('defaults to false', () {
@@ -30,7 +30,7 @@ void main() {
       expect(destination.addSpacerAfter, isTrue);
     });
 
-    testWidgets('does not disturb the Material bottom navigation', (
+    testWidgets('renders the detached destination as a floating button', (
       WidgetTester tester,
     ) async {
       var tapped = -1;
@@ -59,13 +59,46 @@ void main() {
         ),
       );
 
-      expect(find.text('Body'), findsOneWidget);
+      // The two real tabs stay in the bar.
       expect(find.text('Home'), findsOneWidget);
       expect(find.text('Profile'), findsOneWidget);
-      expect(find.text('View'), findsOneWidget);
+      expect(find.widgetWithText(NavigationDestination, 'View'), findsNothing);
 
-      await tester.tap(find.text('View'));
+      // The detached one floats above it instead.
+      final fab = find.byType(FloatingActionButton);
+      expect(fab, findsOneWidget);
+
+      // ...and still reports the index it has in the full item list.
+      await tester.tap(fab);
       expect(tapped, 2);
     });
+
+    testWidgets('leaves the bar alone when no spacer is set', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AdaptiveScaffold(
+            body: const Text('Body'),
+            bottomNavigationBar: AdaptiveBottomNavigationBar(
+              selectedIndex: 0,
+              onTap: (_) {},
+              items: const [
+                AdaptiveNavigationDestination(icon: Icons.home, label: 'Home'),
+                AdaptiveNavigationDestination(
+                  icon: Icons.person,
+                  label: 'Profile',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Home'), findsOneWidget);
+      expect(find.text('Profile'), findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsNothing);
+    });
+
   });
 }

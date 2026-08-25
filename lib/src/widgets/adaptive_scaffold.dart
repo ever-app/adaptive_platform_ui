@@ -9,6 +9,134 @@ import 'adaptive_bottom_navigation_bar.dart';
 import 'adaptive_button.dart';
 import 'ios26/ios26_scaffold.dart';
 
+
+/// Index where the trailing detached group starts, or the item count when there
+/// is none. Mirrors the native `detachedRangeStart`.
+int _detachedRangeStart(List<AdaptiveNavigationDestination> items) {
+  final last = items.lastIndexWhere((e) => e.addSpacerAfter);
+  return last < 0 ? items.length : last + 1;
+}
+
+/// The destinations that belong in the bar itself.
+List<AdaptiveNavigationDestination> _tabDestinations(
+  List<AdaptiveNavigationDestination> items,
+) => items.sublist(0, _detachedRangeStart(items));
+
+/// The destinations drawn beside the bar instead of in it.
+///
+/// iOS 26 renders these as circular glass buttons attached to the tab bar. No
+/// other platform has that, so there they float above the bar as round buttons -
+/// the nearest native equivalent, and the one place a non-destination action
+/// reads correctly on both Material and older Cupertino.
+List<AdaptiveNavigationDestination> _detachedDestinations(
+  List<AdaptiveNavigationDestination> items,
+) => items.sublist(_detachedRangeStart(items));
+
+
+/// The detached destinations, drawn as round floating buttons above the bar.
+///
+/// Used on Android and iOS < 26, where the tab bar has no detached slot. Returns
+/// null when there is nothing detached, so callers can skip the overlay.
+class _DetachedActionButtons extends StatelessWidget {
+  const _DetachedActionButtons({
+    required this.destinations,
+    required this.firstIndex,
+    required this.onTap,
+    required this.material,
+    required this.buildIcon,
+  });
+
+  final List<AdaptiveNavigationDestination> destinations;
+
+  /// Index of `destinations.first` in the full item list, so taps report the
+  /// same index the app would get on iOS 26.
+  final int firstIndex;
+  final ValueChanged<int> onTap;
+  final bool material;
+
+  /// Reuses the scaffold's icon resolution so a detached destination accepts the
+  /// same icon types as any other one.
+  final Widget Function(dynamic rawIcon, TargetPlatform platform) buildIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: List.generate(destinations.length, (i) {
+        final dest = destinations[i];
+        Widget icon = buildIcon(
+          dest.icon,
+          material ? TargetPlatform.android : TargetPlatform.iOS,
+        );
+        if (dest.badgeCount != null && dest.badgeCount! > 0) {
+          icon = AdaptiveBadge(count: dest.badgeCount, child: icon);
+        }
+
+        final button = material
+            ? FloatingActionButton.small(
+                heroTag: 'adaptive_detached_${firstIndex + i}',
+                onPressed: () => onTap(firstIndex + i),
+                tooltip: dest.label,
+                child: icon,
+              )
+            : _CupertinoCircleButton(
+                semanticLabel: dest.label,
+                onPressed: () => onTap(firstIndex + i),
+                child: icon,
+              );
+
+        return Padding(
+          padding: EdgeInsets.only(top: i == 0 ? 0 : 12),
+          child: button,
+        );
+      }),
+    );
+  }
+}
+
+/// A round, floating Cupertino button - the shape iOS uses for controls that sit
+/// on top of content rather than in a bar.
+class _CupertinoCircleButton extends StatelessWidget {
+  const _CupertinoCircleButton({
+    required this.child,
+    required this.onPressed,
+    required this.semanticLabel,
+  });
+
+  final Widget child;
+  final VoidCallback onPressed;
+  final String semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: CupertinoButton(
+        padding: EdgeInsets.zero,
+        onPressed: onPressed,
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: CupertinoColors.systemBackground.resolveFrom(context),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: CupertinoColors.black.withValues(alpha: 0.15),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Center(child: child),
+        ),
+      ),
+    );
+  }
+}
+
 /// Navigation destination for bottom navigation
 class AdaptiveNavigationDestination {
   const AdaptiveNavigationDestination({
@@ -48,24 +176,31 @@ class AdaptiveNavigationDestination {
   /// On iOS <26 and Android: Uses AdaptiveBadge widget
   final int? badgeCount;
 
-  /// Ends the main tab group after this item (iOS 26+ only)
+  /// Ends the main tab group after this item.
   ///
-  /// Destinations after the flagged one are lifted out of the tab pill and
-  /// drawn beside it as a separate circular button - the same treatment iOS 26
-  /// gives its own search tab, so it reads as an action rather than a tab.
-  /// Tapping one still reports its index through `onTap`; if the app leaves
+  /// Destinations after the flagged one stop being tabs and become actions:
+  /// they still report their index through `onTap`, but if the app leaves
   /// `selectedIndex` unchanged the highlight stays on the real tab, which is
-  /// what makes it usable as a toggle.
+  /// what makes them usable as toggles. Give them a page only if you want one.
   ///
-  /// Limitations, all imposed by UIKit - it exposes exactly one detached slot:
+  /// How they are drawn depends on what the platform offers:
+  /// - **iOS 26+**: lifted out of the tab pill and drawn beside it as a
+  ///   separate circular glass button - the treatment iOS 26 gives its own
+  ///   search tab.
+  /// - **iOS <26 and Android**: no tab bar there has a detached slot, so they
+  ///   float above the bar as round buttons instead.
+  ///
+  /// The index reported by `onTap` is the destination's position in the full
+  /// list on every platform, so call sites do not need to branch.
+  ///
+  /// On iOS 26 UIKit exposes exactly one detached slot, which constrains that
+  /// platform only:
   /// - Only the last `addSpacerAfter` in a bar counts; several spacers do not
   ///   produce several groups.
   /// - Only the first destination after the spacer detaches; any further ones
   ///   stay inline.
   /// - A destination with [isSearch] claims the detached slot first, so the two
   ///   cannot be combined in the same tab bar.
-  ///
-  /// Ignored on iOS <26 and on Android.
   final bool addSpacerAfter;
 }
 
@@ -429,11 +564,18 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
             final unselectedColor =
                 widget.bottomNavigationBar!.unselectedItemColor;
 
+            final cupertinoTabs = _tabDestinations(
+              widget.bottomNavigationBar!.items!,
+            );
+
             tabBar = CupertinoTabBar(
-              currentIndex: widget.bottomNavigationBar!.selectedIndex!,
+              currentIndex: widget.bottomNavigationBar!.selectedIndex!.clamp(
+                0,
+                cupertinoTabs.isEmpty ? 0 : cupertinoTabs.length - 1,
+              ),
               onTap: widget.bottomNavigationBar!.onTap!,
               activeColor: widget.bottomNavigationBar!.selectedItemColor,
-              items: widget.bottomNavigationBar!.items!.map((dest) {
+              items: cupertinoTabs.map((dest) {
                 Widget iconWidget = _buildNavigationIconWidget(
                   rawIcon: dest.icon,
                   color: unselectedColor,
@@ -499,6 +641,38 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
             if (!PlatformInfo.isIOS26OrHigher() || !useNativeBottomBar) tabBar!,
           ],
         );
+
+        // iOS <26 has no detached slot in the tab bar, so detached destinations
+        // float above it instead. iOS 26 draws them in the bar itself.
+        if (!PlatformInfo.isIOS26OrHigher() || !useNativeBottomBar) {
+          final detached = _detachedDestinations(
+            widget.bottomNavigationBar!.items!,
+          );
+          if (detached.isNotEmpty) {
+            bodyWidget = Stack(
+              children: [
+                bodyWidget,
+                Positioned(
+                  right: 16,
+                  // 96 clears the tab bar, matching the offset the
+                  // floatingActionButton uses on this path; stack above it when
+                  // both are present.
+                  bottom: 96 + (widget.floatingActionButton != null ? 64 : 0),
+                  child: _DetachedActionButtons(
+                    destinations: detached,
+                    firstIndex: _detachedRangeStart(
+                      widget.bottomNavigationBar!.items!,
+                    ),
+                    onTap: widget.bottomNavigationBar!.onTap!,
+                    material: false,
+                    buildIcon: (raw, platform) =>
+                        _buildNavigationIconWidget(rawIcon: raw, platform: platform),
+                  ),
+                ),
+              ],
+            );
+          }
+        }
 
         if (widget.floatingActionButton != null) {
           bodyWidget = Stack(
@@ -692,11 +866,18 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
       }
       // Priority 2: Build from items
       else {
+        final materialTabs = _tabDestinations(
+          widget.bottomNavigationBar!.items!,
+        );
+
         bottomNavBar = NavigationBar(
-          selectedIndex: widget.bottomNavigationBar!.selectedIndex!,
+          selectedIndex: widget.bottomNavigationBar!.selectedIndex!.clamp(
+            0,
+            materialTabs.isEmpty ? 0 : materialTabs.length - 1,
+          ),
           onDestinationSelected: widget.bottomNavigationBar!.onTap!,
           indicatorColor: widget.bottomNavigationBar!.selectedItemColor,
-          destinations: widget.bottomNavigationBar!.items!.map((dest) {
+          destinations: materialTabs.map((dest) {
             Widget iconWidget = _buildNavigationIconWidget(
               rawIcon: dest.icon,
               platform: TargetPlatform.android,
@@ -727,13 +908,43 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
         );
       }
 
+      // Material's NavigationBar has no detached slot either, so detached
+      // destinations float above it. Scaffold already lifts its own floating
+      // slot clear of the bottom bar, so this only needs to stack above an
+      // app-supplied floatingActionButton when there is one.
+      final materialDetached = _detachedDestinations(
+        widget.bottomNavigationBar!.items!,
+      );
+      Widget? materialFloating = widget.floatingActionButton;
+      if (materialDetached.isNotEmpty) {
+        final detachedButtons = _DetachedActionButtons(
+          destinations: materialDetached,
+          firstIndex: _detachedRangeStart(widget.bottomNavigationBar!.items!),
+          onTap: widget.bottomNavigationBar!.onTap!,
+          material: true,
+          buildIcon: (raw, platform) =>
+              _buildNavigationIconWidget(rawIcon: raw, platform: platform),
+        );
+        materialFloating = materialFloating == null
+            ? detachedButtons
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  detachedButtons,
+                  const SizedBox(height: 12),
+                  materialFloating,
+                ],
+              );
+      }
+
       return Scaffold(
         key: widget.scaffoldKey,
         appBar: appBar,
         body: widget.body ?? const SizedBox.shrink(),
         resizeToAvoidBottomInset: widget.resizeToAvoidBottomInset,
         bottomNavigationBar: bottomNavBar,
-        floatingActionButton: widget.floatingActionButton,
+        floatingActionButton: materialFloating,
         extendBodyBehindAppBar: widget.extendBodyBehindAppBar,
         drawer: widget.drawer,
         endDrawer: widget.endDrawer,
